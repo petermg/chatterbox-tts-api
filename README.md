@@ -1,3 +1,6 @@
+Since for some reason the "developer" of the main repo found it ["inappropriate" for me to ask him for help after sharing a modified version of his incorrect streaming example script](https://github.com/petermg/chatterbox-tts-api/blob/main/devrefusedtohelp.md), I have fixed the problems with streaming and created my own fork.
+
+
 <p align="center">
   <img src="https://lm17s1uz51.ufs.sh/f/EsgO8cDHBTOU5bjcd6giJaPhnlpTZysr24u6k9WGqwIjNgQo" alt="Chatterbox API TTS header">
 </p>
