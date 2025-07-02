@@ -11,7 +11,7 @@ import torchaudio as ta
 from typing import Optional, List, Dict, Any, AsyncGenerator
 from fastapi import APIRouter, HTTPException, status, Form, File, UploadFile
 from fastapi.responses import StreamingResponse
-
+import numpy as np
 from app.models import TTSRequest, ErrorResponse
 from app.config import Config
 from app.core import (
@@ -31,6 +31,22 @@ REQUEST_COUNTER = 0
 
 # Supported audio formats for voice uploads
 SUPPORTED_AUDIO_FORMATS = {'.mp3', '.wav', '.flac', '.m4a', '.ogg'}
+
+def crossfade_pcm(prev_pcm, next_pcm, fade_samples):
+    """
+    Crossfade two PCM float32 numpy arrays (shape: [channels, samples]).
+    Returns (crossfaded: [channels, fade_samples]), next_pcm_trimmed: [channels, rest]
+    """
+    if prev_pcm is None or prev_pcm.shape[1] < fade_samples or next_pcm.shape[1] < fade_samples:
+        # Not enough to crossfade, just return next_pcm unchanged
+        return None, next_pcm
+    # Crossfade region
+    fade_out = np.linspace(1, 0, fade_samples, endpoint=False, dtype=prev_pcm.dtype)
+    fade_in = np.linspace(0, 1, fade_samples, endpoint=False, dtype=prev_pcm.dtype)
+    blended = prev_pcm[:, -fade_samples:] * fade_out + next_pcm[:, :fade_samples] * fade_in
+    # Concatenate: (no crossfade for first chunk, so return only the rest)
+    next_trimmed = next_pcm[:, fade_samples:]
+    return blended, next_trimmed
 
 
 def resolve_voice_path(voice_name: Optional[str]) -> str:
@@ -87,7 +103,7 @@ def validate_audio_file(file: UploadFile) -> None:
         )
     
     # Check file size (max 10MB)
-    max_size = 10 * 1024 * 1024  # 10MB
+    max_size = 25 * 1024 * 1024  # 10MB
     if hasattr(file, 'size') and file.size and file.size > max_size:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -379,7 +395,7 @@ async def generate_speech_streaming(
     # WAV header info for streaming
     sample_rate = model.sr
     channels = 1
-    bits_per_sample = 16
+    bits_per_sample = 32
     
     # Generate and yield WAV header first
     try:
@@ -430,17 +446,13 @@ async def generate_speech_streaming(
         loop = asyncio.get_event_loop()
         total_samples = 0
         
+        prev_pcm = None
+        fade_ms = 10  # Crossfade duration
+        fade_samples = int(sample_rate * fade_ms / 1000)
+
         for i, chunk in enumerate(chunks):
-            # Update progress
-            current_step = f"Streaming audio for chunk {i+1}/{len(chunks)} ({streaming_settings['strategy']} strategy)"
-            update_tts_status(request_id, TTSStatus.GENERATING_AUDIO, current_step, 
-                            current_chunk=i+1, total_chunks=len(chunks))
-            
-            print(f"Streaming audio for chunk {i+1}/{len(chunks)}: '{chunk[:50]}{'...' if len(chunk) > 50 else ''}'")
-            
-            # Use torch.no_grad() to prevent gradient accumulation
+            ...
             with torch.no_grad():
-                # Run TTS generation in executor to avoid blocking
                 audio_tensor = await loop.run_in_executor(
                     None,
                     lambda: model.generate(
@@ -451,26 +463,35 @@ async def generate_speech_streaming(
                         temperature=temperature
                     )
                 )
-                
-                # Ensure tensor is on CPU for streaming
                 if hasattr(audio_tensor, 'cpu'):
                     audio_tensor = audio_tensor.cpu()
-                
-                # Convert tensor to WAV bytes (raw audio data only, no header)
-                temp_buffer = io.BytesIO()
-                ta.save(temp_buffer, audio_tensor, sample_rate, format="wav")
-                temp_data = temp_buffer.getvalue()
-                
-                # Extract just the audio data (skip the 44-byte header)
-                audio_data = temp_data[44:]
-                total_samples += audio_tensor.shape[1]
-                
-                # Yield the raw audio data
-                yield audio_data
-                
-                # Clean up this chunk
+                np_pcm = audio_tensor.numpy() if hasattr(audio_tensor, 'numpy') else np.array(audio_tensor)
+                # Transpose if shape is [samples, channels]
+                if np_pcm.shape[0] < np_pcm.shape[-1]:  # likely shape [samples, channels]
+                    np_pcm = np_pcm.T
+                # Debug:
+                print(f"Chunk {i}: np_pcm shape {np_pcm.shape}, min {np_pcm.min()}, max {np_pcm.max()}")
+                # For first chunk, yield whole chunk except last fade_samples
+                if prev_pcm is None:
+                    chunk_to_stream = np_pcm[:, :-fade_samples] if np_pcm.shape[1] > fade_samples else np_pcm
+                    audio_bytes = np.clip(chunk_to_stream, -1, 1).astype(np.float32).tobytes()
+                    yield audio_bytes
+
+                else:
+                    # Crossfade with previous chunk
+                    cross, np_pcm_trimmed = crossfade_pcm(prev_pcm, np_pcm, fade_samples)
+                    if cross is not None:
+                        cross_bytes = np.clip(cross, -1, 1).astype(np.float32).tobytes()
+                        yield cross_bytes
+
+                    chunk_to_stream = np_pcm_trimmed[:, :-fade_samples] if np_pcm_trimmed.shape[1] > fade_samples else np_pcm_trimmed
+                    audio_bytes = np.clip(chunk_to_stream, -1, 1).astype(np.float32).tobytes()
+                    yield audio_bytes
+
+                prev_pcm = np_pcm
                 safe_delete_tensors(audio_tensor)
-                del temp_buffer, temp_data, audio_data
+                del audio_tensor, np_pcm, chunk_to_stream, audio_bytes
+            
             
             # Periodic memory cleanup during generation
             if i > 0 and i % 3 == 0:  # Every 3 chunks
