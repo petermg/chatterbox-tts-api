@@ -287,7 +287,7 @@ stream_with_progress(
 )
 ```
 
-#### Real-time Playback with pyaudio
+#### Real-time Playback with pyaudio (DO NOT USE THIS, IT'S WRONG, IT'S FROM THE ORIGINAL DEV AND IS INCORRECT. Instead use either [THIS SCRIPT](https://github.com/petermg/chatterbox-tts-api/blob/main/StreamingExampleUsingPyAudio.py) for PyAudio or [THIS SCRIPT](https://github.com/petermg/chatterbox-tts-api/blob/main/StreamingExampleUsingSoundDevice.py) for SoundDevice.)
 
 ```python
 import requests
