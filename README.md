@@ -1,4 +1,4 @@
-Since for some reason the "developer" of the main repo found it ["inappropriate" for me to ask him for help after sharing a modified version of his incorrect streaming example script](https://github.com/petermg/chatterbox-tts-api/blob/main/devrefusedtohelp.md), I have fixed the problems with streaming and created my own fork.
+Since for some reason the "developer" of the main repo found it ["inappropriate" for me to ask him for help after sharing a modified version of his incorrect streaming example script](https://github.com/petermg/chatterbox-tts-api/blob/main/devrefusedtohelp.md), I have fixed the problems with streaming and created my own fork. You can test this is working by running either of the example scripts `StreamingExampleUsingSoundDevice.py` or `StreamingExampleUsingPyAudio.py`.
 
 
 <p align="center">
